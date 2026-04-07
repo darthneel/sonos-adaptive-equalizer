@@ -1,0 +1,18 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "optparse"
+require_relative "../lib/sonos_eq/daemon"
+
+options = {
+  config_path: File.expand_path("../config/settings.yml", __dir__),
+  once: false
+}
+
+OptionParser.new do |parser|
+  parser.banner = "Usage: bin/sonos_eq_daemon [options]"
+  parser.on("-c", "--config PATH", "Path to YAML config") { |v| options[:config_path] = v }
+  parser.on("--once", "Run one poll cycle then exit") { options[:once] = true }
+end.parse!
+
+SonosEq::Daemon.new(options[:config_path], once: options[:once]).run

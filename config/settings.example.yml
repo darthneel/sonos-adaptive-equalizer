@@ -1,0 +1,101 @@
+---
+network:
+  discovery_timeout_sec: 4
+  poll_interval_sec: 5
+  apply_cooldown_sec: 20
+  manual_override_debounce_sec: 10
+  sync_target_rooms_on_startup: true
+  sync_target_device_ids_on_startup: true
+  sync_devices_registry_on_startup: true
+storage:
+  db_path: data/sonos_eq.sqlite3
+home_theater_music:
+  enabled: true
+  rooms: []
+genre_lookup:
+  enabled: true
+  providers:
+  - lastfm
+  - musicbrainz
+  - itunes
+  cache_path: tmp/genre_cache.json
+  cache_ttl_sec: 2592000
+  max_cache_size_bytes: 5242880
+  compact_to_ratio: 0.6
+  user_agent: sonos-eq-daemon/0.1 (local)
+  lastfm:
+    api_key: ''
+    api_key_env: LASTFM_API_KEY
+target_rooms: []
+target_device_ids: []
+devices: {}
+defaults:
+  bass: 0
+  treble: 0
+  loudness: true
+genres:
+  rock:
+    match:
+    - rock
+    - alt
+    - indie
+    - metal
+    - punk
+    - grunge
+    bass: 2
+    treble: 2
+    loudness: true
+  hip_hop:
+    match:
+    - hip hop
+    - hip-hop
+    - rap
+    - trap
+    - drill
+    bass: 4
+    treble: 0
+    loudness: true
+  electronic:
+    match:
+    - edm
+    - house
+    - techno
+    - electro
+    - dance
+    - dnb
+    bass: 3
+    treble: 1
+    loudness: true
+  jazz:
+    match:
+    - jazz
+    - bebop
+    - fusion
+    - swing
+    bass: 0
+    treble: 2
+    loudness: false
+  classical:
+    match:
+    - classical
+    - symphony
+    - concerto
+    - orchestra
+    - opera
+    bass: -1
+    treble: 2
+    loudness: false
+  podcast:
+    match:
+    - podcast
+    - talk
+    - news
+    bass: -1
+    treble: 3
+    loudness: false
+overrides:
+  songs:
+    global: {}
+    by_device: {}
+  artists:
+    global: {}
