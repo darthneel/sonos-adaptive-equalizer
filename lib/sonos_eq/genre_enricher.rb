@@ -3,6 +3,7 @@
 require "json"
 require "uri"
 require "net/http"
+require "timeout"
 
 module SonosEq
   class GenreEnricher
@@ -11,13 +12,20 @@ module SonosEq
       @providers = Array(config["providers"]).map(&:to_s)
       @providers = %w[lastfm musicbrainz itunes] if @providers.empty?
       @cache_ttl_sec = config.fetch("cache_ttl_sec", 86_400).to_i
+      @negative_cache_ttl_sec = config.fetch("negative_cache_ttl_sec", 21_600).to_i
       @max_cache_size_bytes = config.fetch("max_cache_size_bytes", 5 * 1024 * 1024).to_i
       @compact_to_ratio = config.fetch("compact_to_ratio", 0.6).to_f
+      @provider_timeout_sec = config.fetch("provider_timeout_sec", 8).to_f
+      @lookup_budget_sec = config.fetch("lookup_budget_sec", 15).to_f
+      @provider_failure_backoff_sec = config.fetch("provider_failure_backoff_sec", 300).to_f
+      @musicbrainz_min_interval_sec = config.fetch("musicbrainz_min_interval_sec", 1.1).to_f
       @user_agent = config.fetch("user_agent", "sonos-eq-daemon/0.1 (local)")
       @lastfm_api_key = resolve_lastfm_api_key(config["lastfm"] || {})
       @store = store
       @normalizer = normalizer
       @cache_writes = cache_writes
+      @provider_backoff_until = {}
+      @last_musicbrainz_request_at = nil
     end
 
     def resolve(track_info)
@@ -27,16 +35,31 @@ module SonosEq
       artist = track_info[:artist].to_s.strip
       return { genre: nil, source: nil } if title.empty? && artist.empty?
 
-      cached = @store.read_genre_cache(artist: artist, title: title, ttl_sec: @cache_ttl_sec)
+      cached = @store.read_genre_cache(
+        artist: artist,
+        title: title,
+        ttl_sec: @cache_ttl_sec,
+        negative_ttl_sec: @negative_cache_ttl_sec
+      )
       return cached if cached
 
+      started_at = monotonic_now
+      complete_miss = true
       @providers.each do |provider|
-        raw_candidates = case provider
-                         when "lastfm" then lookup_lastfm(artist, title)
-                         when "musicbrainz" then lookup_musicbrainz(artist, title)
-                         when "itunes" then lookup_itunes(artist, title)
-                         else []
-                         end
+        if provider_backed_off?(provider)
+          complete_miss = false
+          next
+        end
+
+        remaining = @lookup_budget_sec - (monotonic_now - started_at)
+        if remaining <= 0
+          complete_miss = false
+          break
+        end
+
+        raw_candidates = Timeout.timeout([remaining, @provider_timeout_sec].min) do
+          lookup_provider(provider, artist, title)
+        end
         genre = @normalizer.normalize_candidates(raw_candidates)
         next if genre == "unknown"
 
@@ -46,8 +69,16 @@ module SonosEq
           @store.compact_genre_cache!(max_bytes: @max_cache_size_bytes, compact_to_ratio: @compact_to_ratio)
         end
         return result
+      rescue StandardError => e
+        complete_miss = false
+        @provider_backoff_until[provider] = monotonic_now + @provider_failure_backoff_sec
+        warn "genre_lookup provider=#{provider.inspect} error=#{e.class}: #{e.message}"
       end
 
+      if complete_miss && @cache_writes
+        @store.write_genre_cache_miss(artist: artist, title: title)
+        @store.compact_genre_cache!(max_bytes: @max_cache_size_bytes, compact_to_ratio: @compact_to_ratio)
+      end
       { genre: nil, source: nil }
     end
 
@@ -61,6 +92,14 @@ module SonosEq
       ENV.fetch(env_name, "").to_s.strip
     end
 
+    def lookup_provider(provider, artist, title)
+      case provider
+      when "lastfm" then lookup_lastfm(artist, title)
+      when "musicbrainz" then lookup_musicbrainz(artist, title)
+      when "itunes" then lookup_itunes(artist, title)
+      else []
+      end
+    end
 
     def lookup_lastfm(artist, title)
       return nil if @lastfm_api_key.to_s.empty?
@@ -139,6 +178,7 @@ module SonosEq
     end
 
     def http_json(uri)
+      throttle_musicbrainz if uri.host == "musicbrainz.org"
       response_body = Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == "https", open_timeout: 3, read_timeout: 6) do |http|
         request = Net::HTTP::Get.new(uri)
         request["User-Agent"] = @user_agent
@@ -148,6 +188,22 @@ module SonosEq
         response.body
       end
       JSON.parse(response_body)
+    end
+
+    def throttle_musicbrainz
+      if @last_musicbrainz_request_at
+        remaining = @musicbrainz_min_interval_sec - (monotonic_now - @last_musicbrainz_request_at)
+        sleep remaining if remaining.positive?
+      end
+      @last_musicbrainz_request_at = monotonic_now
+    end
+
+    def provider_backed_off?(provider)
+      @provider_backoff_until.fetch(provider, 0) > monotonic_now
+    end
+
+    def monotonic_now
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
   end
 end

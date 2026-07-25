@@ -215,7 +215,7 @@ module SonosEq
       end
     end
 
-    def read_genre_cache(artist:, title:, ttl_sec:)
+    def read_genre_cache(artist:, title:, ttl_sec:, negative_ttl_sec: ttl_sec)
       row = @db.get_first_row(
         "SELECT genre, provider, seen_at FROM genre_cache WHERE artist_norm = ? AND title_norm = ?",
         [normalize_key(artist), normalize_key(title)]
@@ -223,7 +223,11 @@ module SonosEq
       return nil if row.nil?
 
       seen_at = Time.parse(row["seen_at"].to_s)
-      return nil if Time.now - seen_at > ttl_sec.to_i
+      negative = row["genre"].to_s == "unknown"
+      effective_ttl = negative ? negative_ttl_sec.to_i : ttl_sec.to_i
+      return nil if Time.now - seen_at > effective_ttl
+
+      return { genre: nil, source: "negative_cache" } if negative
 
       { genre: row["genre"], source: row["provider"] }
     rescue StandardError
@@ -251,6 +255,15 @@ module SonosEq
         provider.to_s,
         now
       ])
+    end
+
+    def write_genre_cache_miss(artist:, title:)
+      write_genre_cache(
+        artist: artist,
+        title: title,
+        genre: "unknown",
+        provider: "none"
+      )
     end
 
     def compact_genre_cache!(max_bytes:, compact_to_ratio:)

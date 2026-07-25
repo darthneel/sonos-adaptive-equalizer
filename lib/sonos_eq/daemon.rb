@@ -74,6 +74,7 @@ module SonosEq
       puts "Discovered rooms: #{devices.map(&:room_name).sort.join(', ')}"
       puts "Monitoring rooms: #{monitored.map(&:room_name).sort.join(', ')}"
       puts "Dry run: speaker and persistent-state writes are disabled" if @dry_run
+      last_discovery_at = monotonic_now
 
       loop do
         monitored.each do |device|
@@ -82,6 +83,11 @@ module SonosEq
         break if @once
 
         sleep cfg.dig("network", "poll_interval_sec").to_i
+        rediscovery_interval = cfg.dig("network", "rediscovery_interval_sec").to_f
+        if monotonic_now - last_discovery_at >= rediscovery_interval
+          monitored = rediscover_monitored_devices(discovery, monitored, cfg)
+          last_discovery_at = monotonic_now
+        end
       end
     end
 
@@ -403,6 +409,22 @@ module SonosEq
       end
     end
 
+    def rediscover_monitored_devices(discovery, current_monitored, cfg)
+      devices = discovery.discover
+      if devices.empty?
+        puts "#{timestamp} rediscovery=empty retaining_previous_devices=#{current_monitored.size}"
+        return current_monitored
+      end
+
+      sync_devices_registry!(devices, cfg) unless @dry_run
+      monitored = select_monitored_devices(devices, cfg)
+      puts "#{timestamp} rediscovery=updated discovered=#{devices.size} monitored=#{monitored.size}"
+      monitored
+    rescue StandardError => e
+      puts "#{timestamp} rediscovery=error error=#{e.message.inspect} retaining_previous_devices=#{current_monitored.size}"
+      current_monitored
+    end
+
     def track_key_for(track_info)
       [track_info[:track_uri], track_info[:title], track_info[:artist]].join("|")
     end
@@ -490,6 +512,10 @@ module SonosEq
 
     def timestamp
       Time.now.iso8601
+    end
+
+    def monotonic_now
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
 
     def db_path_from_config(cfg)

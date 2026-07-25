@@ -71,6 +71,7 @@ Edit `config/settings.yml`:
 - `network.poll_interval_sec`: how often to poll now-playing.
 - `network.apply_cooldown_sec`: minimum seconds between EQ writes per room.
 - `network.manual_override_debounce_sec`: required stability window before a manual change is learned.
+- `network.rediscovery_interval_sec`: how often to refresh device addresses and room membership.
 - `network.sync_devices_registry_on_startup`: when true, `devices` registry is refreshed with `room_name`, `model_name`, and `ip` for readability.
 - `home_theater_music.enabled`: when true, track/apply HT music controls on configured rooms.
 - `home_theater_music.rooms`: room names where HT controls are active (for example `Living Room`).
@@ -80,6 +81,9 @@ Edit `config/settings.yml`:
 - `genre_lookup.lastfm.api_key` or `genre_lookup.lastfm.api_key_env` (`LASTFM_API_KEY`) for Last.fm lookups.
 - `genre_lookup.max_cache_size_bytes`: max cache size before compaction (default 5MB).
 - `genre_lookup.compact_to_ratio`: compaction target fraction (default `0.6`) after max size is exceeded.
+- `genre_lookup.negative_cache_ttl_sec`: how long to suppress repeated lookups for complete misses.
+- `genre_lookup.provider_timeout_sec` and `lookup_budget_sec`: per-provider and whole-lookup time limits.
+- `genre_lookup.provider_failure_backoff_sec`: temporary backoff after a provider error.
 - `genres.<name>.match`: keywords for fallback genre inference.
 - `genres.<name>.bass|treble|loudness`: EQ preset to apply.
 - `overrides`: auto-learned and manually editable high-specificity presets.
@@ -101,7 +105,7 @@ Edit `config/settings.yml`:
 - If not, the daemon falls back to keyword matching against title/artist/album/URI.
 - If still unknown, it queries external providers in order (`lastfm`, `musicbrainz`, `itunes`) and caches results in `genre_lookup.cache_path`.
 - Raw provider genres/tags are normalized into a fixed canonical app genre set before preset selection.
-- Only successful genre lookups are cached.
+- Successful lookups and short-lived complete misses are cached.
 - Cache eviction: TTL expiry on read plus logical cache-size compaction (oldest `seen_at` entries evicted to the configured target ratio).
 - Preset precedence is: `song+device` -> `song` -> `artist` -> `genre` -> `default`.
 - If you change EQ in the Sonos app and it remains stable for `manual_override_debounce_sec`, the daemon writes a `song+device` override into SQLite.
@@ -112,6 +116,7 @@ Edit `config/settings.yml`:
 - Home theater music controls are only touched when the source looks like music, not TV input.
 - On track change, the daemon persists only candidates that already satisfied the manual-change debounce window.
 - Discovery never changes `target_rooms` or `target_device_ids`; these remain explicit allowlists.
+- Device discovery is refreshed periodically; transient empty rediscovery retains the last known endpoints.
 - `--dry-run` performs one cycle without speaker, database, or config writes.
 - Safety: volume-changing SOAP actions are blocked in code (`SetVolume`, `SetRelativeVolume`, `SetVolumeDB`, `SetRelativeVolumeDB`).
 - This uses local Sonos UPnP APIs only and does not require Sonos cloud auth.

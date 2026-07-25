@@ -52,6 +52,16 @@ class DaemonTest < Minitest::Test
     end
   end
 
+  class FakeDiscovery
+    def initialize(devices)
+      @devices = devices
+    end
+
+    def discover
+      @devices
+    end
+  end
+
   def build_daemon
     daemon = SonosEq::Daemon.new("/tmp/sonos_eq_test.yml", once: true)
     daemon.instance_variable_set(:@policy, FakePolicy.new)
@@ -225,5 +235,46 @@ class DaemonTest < Minitest::Test
 
     assert_nil daemon.instance_variable_get(:@override_candidates)[device.udn]
     assert_empty daemon.instance_variable_get(:@store).override_writes
+  end
+
+  def test_rediscovery_refreshes_monitored_endpoints
+    daemon = build_daemon
+    refreshed = Device.new(
+      udn: device.udn,
+      room_name: device.room_name,
+      ip: "192.168.1.99"
+    )
+    config = {
+      "network" => { "sync_devices_registry_on_startup" => false },
+      "target_rooms" => [],
+      "target_device_ids" => [device.udn]
+    }
+
+    monitored = daemon.send(
+      :rediscover_monitored_devices,
+      FakeDiscovery.new([refreshed]),
+      [device],
+      config
+    )
+
+    assert_equal ["192.168.1.99"], monitored.map(&:ip)
+  end
+
+  def test_empty_rediscovery_retains_last_known_devices
+    daemon = build_daemon
+    config = {
+      "network" => { "sync_devices_registry_on_startup" => false },
+      "target_rooms" => [],
+      "target_device_ids" => []
+    }
+
+    monitored = daemon.send(
+      :rediscover_monitored_devices,
+      FakeDiscovery.new([]),
+      [device],
+      config
+    )
+
+    assert_equal [device], monitored
   end
 end

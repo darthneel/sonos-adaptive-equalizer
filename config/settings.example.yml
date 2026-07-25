@@ -22,6 +22,10 @@ genre_lookup:
   negative_cache_ttl_sec: 21600
   max_cache_size_bytes: 5242880
   compact_to_ratio: 0.6
+  provider_timeout_sec: 8
+  lookup_budget_sec: 15
+  provider_failure_backoff_sec: 300
+  musicbrainz_min_interval_sec: 1.1
   user_agent: sonos-eq-daemon/0.1 (local)
   lastfm:
     api_key: ''

@@ -28,7 +28,11 @@ module SonosEq
         "cache_ttl_sec" => 2_592_000,
         "negative_cache_ttl_sec" => 21_600,
         "max_cache_size_bytes" => 5 * 1024 * 1024,
-        "compact_to_ratio" => 0.6
+        "compact_to_ratio" => 0.6,
+        "provider_timeout_sec" => 8,
+        "lookup_budget_sec" => 15,
+        "provider_failure_backoff_sec" => 300,
+        "musicbrainz_min_interval_sec" => 1.1
       },
       "target_rooms" => [],
       "target_device_ids" => [],
@@ -46,6 +50,8 @@ module SonosEq
       network.discovery_timeout_sec
       network.poll_interval_sec
       network.rediscovery_interval_sec
+      genre_lookup.provider_timeout_sec
+      genre_lookup.lookup_budget_sec
     ].freeze
     NON_NEGATIVE_NUMBERS = %w[
       network.apply_cooldown_sec
@@ -53,8 +59,9 @@ module SonosEq
       genre_lookup.cache_ttl_sec
       genre_lookup.negative_cache_ttl_sec
       genre_lookup.max_cache_size_bytes
+      genre_lookup.provider_failure_backoff_sec
+      genre_lookup.musicbrainz_min_interval_sec
     ].freeze
-
     def self.load(path)
       raw = YAML.safe_load_file(path, permitted_classes: [], aliases: false)
       raise Error, "Configuration must contain a YAML mapping" unless raw.is_a?(Hash)

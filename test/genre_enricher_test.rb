@@ -12,13 +12,17 @@ class GenreEnricherTest < Minitest::Test
       @compact_calls = []
     end
 
-    def read_genre_cache(artist:, title:, ttl_sec:)
-      @read_args = { artist: artist, title: title, ttl_sec: ttl_sec }
+    def read_genre_cache(artist:, title:, ttl_sec:, negative_ttl_sec:)
+      @read_args = { artist: artist, title: title, ttl_sec: ttl_sec, negative_ttl_sec: negative_ttl_sec }
       @cached
     end
 
     def write_genre_cache(artist:, title:, genre:, provider:)
       @writes << { artist: artist, title: title, genre: genre, provider: provider }
+    end
+
+    def write_genre_cache_miss(artist:, title:)
+      @writes << { artist: artist, title: title, genre: "unknown", provider: "none" }
     end
 
     def compact_genre_cache!(max_bytes:, compact_to_ratio:)
@@ -98,14 +102,30 @@ class GenreEnricherTest < Minitest::Test
     assert_equal 1, store.compact_calls.length
   end
 
-  def test_miss_does_not_write_negative_cache
+  def test_complete_miss_writes_negative_cache
     store = FakeStore.new
     enricher = build_enricher(store)
 
     result = enricher.resolve(title: "Song", artist: "Artist")
 
     assert_equal({ genre: nil, source: nil }, result)
-    assert_empty store.writes
-    assert_empty store.compact_calls
+    assert_equal "unknown", store.writes.first[:genre]
+    assert_equal 1, store.compact_calls.length
+  end
+
+  def test_provider_error_falls_through_without_negative_caching
+    store = FakeStore.new
+    enricher = build_enricher(store)
+    enricher.define_singleton_method(:lookup_lastfm) { |_artist, _title| raise "offline" }
+    enricher.musicbrainz_result = ["rock"]
+
+    _stdout, stderr = capture_io do
+      result = enricher.resolve(title: "Song", artist: "Artist")
+      assert_equal({ genre: "rock", source: "musicbrainz" }, result)
+    end
+
+    assert_includes stderr, "provider=\"lastfm\""
+    assert_equal 1, store.writes.length
+    assert_equal "rock", store.writes.first[:genre]
   end
 end

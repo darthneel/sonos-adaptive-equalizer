@@ -118,4 +118,20 @@ class StoreTest < Minitest::Test
       assert_operator after_count, :<, before_count
     end
   end
+
+  def test_negative_cache_uses_its_own_ttl
+    with_tmpdir do |tmpdir|
+      store = build_store(tmpdir)
+      store.write_genre_cache_miss(artist: "Unknown", title: "Track")
+
+      cached = store.read_genre_cache(
+        artist: "Unknown",
+        title: "Track",
+        ttl_sec: 1000,
+        negative_ttl_sec: 1000
+      )
+
+      assert_equal({ genre: nil, source: "negative_cache" }, cached)
+    end
+  end
 end
