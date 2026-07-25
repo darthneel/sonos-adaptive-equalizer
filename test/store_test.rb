@@ -34,10 +34,18 @@ class StoreTest < Minitest::Test
       },
       "overrides" => {
         "songs" => {
+          "global" => {
+            "artist global - song global" => { "bass" => 2, "treble" => 3, "loudness" => false }
+          },
           "by_device" => {
             "uuid:device-1" => {
               "artist a - song a" => { "bass" => 5, "treble" => 6, "loudness" => true }
             }
+          }
+        },
+        "artists" => {
+          "global" => {
+            "artist global" => { "bass" => 1, "treble" => 1, "loudness" => true }
           }
         }
       },
@@ -62,6 +70,8 @@ class StoreTest < Minitest::Test
       assert_equal({ "bass" => 1, "treble" => 2, "loudness" => false }, store.load_default_settings)
       assert_equal 3, store.load_genre_presets.dig("rock", "bass")
       assert_equal 5, store.load_song_overrides.dig("uuid:device-1", "artist a - song a", "bass")
+      assert_equal 2, store.load_global_song_overrides.dig("artist global - song global", "bass")
+      assert_equal 1, store.load_artist_overrides.dig("artist global", "bass")
       assert_equal "Kitchen", store.load_devices_registry.dig("uuid:device-1", "room_name")
 
       cached = store.read_genre_cache(artist: "Artist A", title: "Song A", ttl_sec: 1000)
@@ -132,6 +142,23 @@ class StoreTest < Minitest::Test
       )
 
       assert_equal({ genre: nil, source: "negative_cache" }, cached)
+    end
+  end
+
+  def test_global_and_artist_override_crud
+    with_tmpdir do |tmpdir|
+      store = build_store(tmpdir)
+      preset = { "bass" => 3, "treble" => 2, "loudness" => false }
+
+      store.upsert_global_song_override(artist: "Artist", title: "Song", preset: preset, source: "test")
+      store.upsert_artist_override(artist: "Artist", preset: preset, source: "test")
+
+      assert_equal 3, store.load_overrides.dig("songs", "global", "artist - song", "bass")
+      assert_equal false, store.load_overrides.dig("artists", "global", "artist", "loudness")
+      assert_equal 1, store.delete_song_override(artist: "Artist", title: "Song")
+      assert_equal 1, store.delete_artist_override(artist: "Artist")
+      assert_empty store.load_global_song_overrides
+      assert_empty store.load_artist_overrides
     end
   end
 end

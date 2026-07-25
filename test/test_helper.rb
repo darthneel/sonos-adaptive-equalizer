@@ -12,6 +12,7 @@ require "sonos_eq/genre_enricher"
 require "sonos_eq/genre_normalizer"
 require "sonos_eq/store"
 require "sonos_eq/daemon"
+require "sonos_eq/override_cli"
 
 module SonosEqTestSupport
   def with_tmpdir

@@ -57,6 +57,17 @@ Custom config:
 bin/sonos_eq_daemon --config /path/to/settings.yml
 ```
 
+Manage durable overrides:
+
+```bash
+bin/sonos_eq_overrides list
+bin/sonos_eq_overrides set-song --artist "Artist" --title "Song" --bass 3 --treble 1 --no-loudness
+bin/sonos_eq_overrides set-song --device uuid:RINCON_... --artist "Artist" --title "Song" --bass 4
+bin/sonos_eq_overrides set-artist --artist "Artist" --bass 2 --treble 1
+bin/sonos_eq_overrides delete-song --artist "Artist" --title "Song"
+bin/sonos_eq_overrides export
+```
+
 ## Test
 
 ```bash
@@ -108,6 +119,7 @@ Edit `config/settings.yml`:
 - Successful lookups and short-lived complete misses are cached.
 - Cache eviction: TTL expiry on read plus logical cache-size compaction (oldest `seen_at` entries evicted to the configured target ratio).
 - Preset precedence is: `song+device` -> `song` -> `artist` -> `genre` -> `default`.
+- Global song and artist overrides are persisted in SQLite and can be managed with `bin/sonos_eq_overrides`.
 - If you change EQ in the Sonos app and it remains stable for `manual_override_debounce_sec`, the daemon writes a `song+device` override into SQLite.
 - Learned overrides are stored in SQLite using device IDs (Sonos UDNs).
 - Legacy YAML bootstrap data is imported into SQLite on first run.

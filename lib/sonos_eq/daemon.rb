@@ -2,7 +2,6 @@
 
 require "time"
 require "rexml/document"
-require "pathname"
 require_relative "config"
 require_relative "discovery"
 require_relative "soap_client"
@@ -60,15 +59,7 @@ module SonosEq
         normalizer: normalizer,
         cache_writes: !@dry_run
       )
-      overrides = {
-        "songs" => {
-          "global" => {},
-          "by_device" => @store.load_song_overrides
-        },
-        "artists" => {
-          "global" => {}
-        }
-      }
+      overrides = @store.load_overrides
       @policy = EqPolicy.new(@store.load_default_settings || {}, genre_presets, overrides)
 
       puts "Discovered rooms: #{devices.map(&:room_name).sort.join(', ')}"
@@ -519,11 +510,7 @@ module SonosEq
     end
 
     def db_path_from_config(cfg)
-      candidate = cfg.dig("storage", "db_path").to_s.strip
-      candidate = "data/sonos_eq.sqlite3" if candidate.empty?
-      return candidate if Pathname.new(candidate).absolute?
-
-      File.expand_path(candidate, File.dirname(@config_path))
+      Config.db_path(cfg, @config_path)
     end
 
   end

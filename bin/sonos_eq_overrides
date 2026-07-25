@@ -1,0 +1,11 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require_relative "../lib/sonos_eq/override_cli"
+
+begin
+  SonosEq::OverrideCli.run(ARGV)
+rescue OptionParser::ParseError, SonosEq::Config::Error => e
+  warn "Error: #{e.message}"
+  exit 1
+end

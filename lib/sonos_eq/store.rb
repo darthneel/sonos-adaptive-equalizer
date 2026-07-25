@@ -66,6 +66,35 @@ module SonosEq
           PRIMARY KEY (device_id, artist_norm, title_norm)
         );
 
+        CREATE TABLE IF NOT EXISTS global_song_overrides (
+          artist_norm TEXT NOT NULL,
+          title_norm TEXT NOT NULL,
+          artist_display TEXT,
+          title_display TEXT,
+          bass INTEGER NOT NULL,
+          treble INTEGER NOT NULL,
+          loudness INTEGER NOT NULL,
+          sub_gain INTEGER,
+          surround_level INTEGER,
+          source TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (artist_norm, title_norm)
+        );
+
+        CREATE TABLE IF NOT EXISTS artist_overrides (
+          artist_norm TEXT PRIMARY KEY,
+          artist_display TEXT,
+          bass INTEGER NOT NULL,
+          treble INTEGER NOT NULL,
+          loudness INTEGER NOT NULL,
+          sub_gain INTEGER,
+          surround_level INTEGER,
+          source TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS devices (
           device_id TEXT PRIMARY KEY,
           room_name TEXT NOT NULL,
@@ -90,16 +119,25 @@ module SonosEq
     end
 
     def import_legacy!(config:, config_dir:)
-      return if metadata("legacy_import_completed") == "1"
+      legacy_complete = metadata("legacy_import_completed") == "1"
+      scoped_override_complete = metadata("scoped_override_import_completed") == "1"
+      return if legacy_complete && scoped_override_complete
 
       now = Time.now.iso8601
       @db.transaction
-      import_defaults(config["defaults"] || {}, now)
-      import_genre_presets(config["genres"] || {}, now)
-      import_song_overrides(config.dig("overrides", "songs", "by_device") || {}, now)
-      import_devices(config["devices"] || {}, now)
-      import_genre_cache_json(resolve_legacy_genre_cache_path(config, config_dir))
-      set_metadata("legacy_import_completed", "1", now)
+      unless legacy_complete
+        import_defaults(config["defaults"] || {}, now)
+        import_genre_presets(config["genres"] || {}, now)
+        import_song_overrides(config.dig("overrides", "songs", "by_device") || {}, now)
+        import_devices(config["devices"] || {}, now)
+        import_genre_cache_json(resolve_legacy_genre_cache_path(config, config_dir))
+        set_metadata("legacy_import_completed", "1", now)
+      end
+      unless scoped_override_complete
+        import_global_song_overrides(config.dig("overrides", "songs", "global") || {}, now)
+        import_artist_overrides(config.dig("overrides", "artists", "global") || {}, now)
+        set_metadata("scoped_override_import_completed", "1", now)
+      end
       @db.commit
     rescue StandardError
       @db.rollback
@@ -141,6 +179,38 @@ module SonosEq
       end
     end
 
+    def load_global_song_overrides
+      rows = @db.execute(<<~SQL)
+        SELECT artist_norm, title_norm, bass, treble, loudness, sub_gain, surround_level
+        FROM global_song_overrides
+      SQL
+      rows.each_with_object({}) do |row, acc|
+        acc[song_key(row["artist_norm"], row["title_norm"])] = row_to_preset(row)
+      end
+    end
+
+    def load_artist_overrides
+      rows = @db.execute(<<~SQL)
+        SELECT artist_norm, bass, treble, loudness, sub_gain, surround_level
+        FROM artist_overrides
+      SQL
+      rows.each_with_object({}) do |row, acc|
+        acc[row["artist_norm"]] = row_to_preset(row)
+      end
+    end
+
+    def load_overrides
+      {
+        "songs" => {
+          "global" => load_global_song_overrides,
+          "by_device" => load_song_overrides
+        },
+        "artists" => {
+          "global" => load_artist_overrides
+        }
+      }
+    end
+
     def upsert_song_override(device_id:, artist:, title:, preset:, source:)
       artist_norm = normalize_key(artist)
       title_norm = normalize_key(title)
@@ -180,6 +250,85 @@ module SonosEq
       ])
 
       preset
+    end
+
+    def upsert_global_song_override(artist:, title:, preset:, source:)
+      artist_norm = normalize_key(artist)
+      title_norm = normalize_key(title)
+      return nil if artist_norm.empty? && title_norm.empty?
+
+      now = Time.now.iso8601
+      values = [
+        artist_norm, title_norm, artist.to_s, title.to_s,
+        *preset_values(preset), source.to_s, now, now
+      ]
+      sql = <<~SQL
+        INSERT INTO global_song_overrides (
+          artist_norm, title_norm, artist_display, title_display,
+          bass, treble, loudness, sub_gain, surround_level, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(artist_norm, title_norm) DO UPDATE SET
+          artist_display = excluded.artist_display,
+          title_display = excluded.title_display,
+          bass = excluded.bass,
+          treble = excluded.treble,
+          loudness = excluded.loudness,
+          sub_gain = excluded.sub_gain,
+          surround_level = excluded.surround_level,
+          source = excluded.source,
+          updated_at = excluded.updated_at
+      SQL
+      @db.execute(sql, values)
+      preset
+    end
+
+    def upsert_artist_override(artist:, preset:, source:)
+      artist_norm = normalize_key(artist)
+      return nil if artist_norm.empty?
+
+      now = Time.now.iso8601
+      values = [
+        artist_norm, artist.to_s, *preset_values(preset), source.to_s, now, now
+      ]
+      sql = <<~SQL
+        INSERT INTO artist_overrides (
+          artist_norm, artist_display, bass, treble, loudness,
+          sub_gain, surround_level, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(artist_norm) DO UPDATE SET
+          artist_display = excluded.artist_display,
+          bass = excluded.bass,
+          treble = excluded.treble,
+          loudness = excluded.loudness,
+          sub_gain = excluded.sub_gain,
+          surround_level = excluded.surround_level,
+          source = excluded.source,
+          updated_at = excluded.updated_at
+      SQL
+      @db.execute(sql, values)
+      preset
+    end
+
+    def delete_song_override(artist:, title:, device_id: nil)
+      artist_norm = normalize_key(artist)
+      title_norm = normalize_key(title)
+      if device_id.to_s.empty?
+        @db.execute(
+          "DELETE FROM global_song_overrides WHERE artist_norm = ? AND title_norm = ?",
+          [artist_norm, title_norm]
+        )
+      else
+        @db.execute(
+          "DELETE FROM song_overrides WHERE device_id = ? AND artist_norm = ? AND title_norm = ?",
+          [device_id.to_s, artist_norm, title_norm]
+        )
+      end
+      @db.changes
+    end
+
+    def delete_artist_override(artist:)
+      @db.execute("DELETE FROM artist_overrides WHERE artist_norm = ?", [normalize_key(artist)])
+      @db.changes
     end
 
     def upsert_devices(devices)
@@ -375,6 +524,45 @@ module SonosEq
       end
     end
 
+    def import_global_song_overrides(entries, now)
+      return unless @db.get_first_value("SELECT COUNT(*) FROM global_song_overrides").to_i.zero?
+
+      entries.each do |key, preset|
+        artist_norm, title_norm = split_song_key(key)
+        values = [
+          artist_norm, title_norm, artist_norm, title_norm,
+          *preset_values(preset), "legacy_import", now, now
+        ]
+        sql = <<~SQL
+          INSERT INTO global_song_overrides (
+            artist_norm, title_norm, artist_display, title_display,
+            bass, treble, loudness, sub_gain, surround_level, source, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        SQL
+        @db.execute(sql, values)
+      end
+    end
+
+    def import_artist_overrides(entries, now)
+      return unless @db.get_first_value("SELECT COUNT(*) FROM artist_overrides").to_i.zero?
+
+      entries.each do |artist, preset|
+        artist_norm = normalize_key(artist)
+        next if artist_norm.empty?
+
+        values = [
+          artist_norm, artist.to_s, *preset_values(preset), "legacy_import", now, now
+        ]
+        sql = <<~SQL
+          INSERT INTO artist_overrides (
+            artist_norm, artist_display, bass, treble, loudness,
+            sub_gain, surround_level, source, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        SQL
+        @db.execute(sql, values)
+      end
+    end
+
     def import_devices(devices, now)
       return unless @db.get_first_value("SELECT COUNT(*) FROM devices").to_i.zero?
 
@@ -445,6 +633,16 @@ module SonosEq
       return value if value == true || value == false
 
       !%w[0 false no off].include?(value.to_s.strip.downcase)
+    end
+
+    def preset_values(preset)
+      [
+        preset.fetch("bass", 0).to_i,
+        preset.fetch("treble", 0).to_i,
+        truthy?(preset.fetch("loudness", true)) ? 1 : 0,
+        preset["sub_gain"],
+        preset["surround_level"]
+      ]
     end
 
     def genre_cache_size_bytes

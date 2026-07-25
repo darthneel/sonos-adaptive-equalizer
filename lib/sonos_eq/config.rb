@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "yaml"
+require "pathname"
 
 module SonosEq
   class Config
@@ -103,6 +104,14 @@ module SonosEq
       end
 
       config
+    end
+
+    def self.db_path(config, config_path)
+      candidate = config.dig("storage", "db_path").to_s.strip
+      candidate = DEFAULTS.dig("storage", "db_path") if candidate.empty?
+      return candidate if Pathname.new(candidate).absolute?
+
+      File.expand_path(candidate, File.dirname(File.expand_path(config_path)))
     end
 
     def self.deep_merge(base, override)
