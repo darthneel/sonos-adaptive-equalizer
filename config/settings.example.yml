@@ -4,8 +4,7 @@ network:
   poll_interval_sec: 5
   apply_cooldown_sec: 20
   manual_override_debounce_sec: 10
-  sync_target_rooms_on_startup: true
-  sync_target_device_ids_on_startup: true
+  rediscovery_interval_sec: 300
   sync_devices_registry_on_startup: true
 storage:
   db_path: data/sonos_eq.sqlite3
@@ -20,6 +19,7 @@ genre_lookup:
   - itunes
   cache_path: tmp/genre_cache.json
   cache_ttl_sec: 2592000
+  negative_cache_ttl_sec: 21600
   max_cache_size_bytes: 5242880
   compact_to_ratio: 0.6
   user_agent: sonos-eq-daemon/0.1 (local)

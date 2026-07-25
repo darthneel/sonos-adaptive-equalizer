@@ -142,4 +142,43 @@ class DaemonTest < Minitest::Test
     assert_equal "uuid:device-1", store.override_writes.first[:device_id]
     assert_equal 4, store.override_writes.first[:preset]["bass"]
   end
+
+  def test_explicit_targets_are_not_widened_to_every_discovered_device
+    daemon = build_daemon
+    other = Device.new(udn: "uuid:device-2", room_name: "Kitchen")
+    config = {
+      "target_rooms" => ["Living Room"],
+      "target_device_ids" => []
+    }
+
+    selected = daemon.send(:select_monitored_devices, [device, other], config)
+
+    assert_equal ["uuid:device-1"], selected.map(&:udn)
+    assert_equal ["Living Room"], config["target_rooms"]
+  end
+
+  def test_dry_run_reports_without_applying
+    daemon = SonosEq::Daemon.new("/tmp/sonos_eq_test.yml", once: true, dry_run: true)
+    policy = FakePolicy.new
+    daemon.instance_variable_set(:@policy, policy)
+    daemon.instance_variable_set(:@store, FakeStore.new)
+    applied = []
+    daemon.define_singleton_method(:current_track_info) do |_device|
+      {
+        track_uri: "x-rincon-queue:RINCON_123#0",
+        title: "Song",
+        artist: "Artist",
+        album: "Album",
+        track_metadata_xml: ""
+      }
+    end
+    daemon.define_singleton_method(:current_eq) do |_device, include_ht_music:|
+      { "bass" => 0, "treble" => 0, "loudness" => true }
+    end
+    daemon.define_singleton_method(:apply_eq) { |*| applied << true }
+
+    daemon.send(:process_device, device, FakeClassifier.new, FakeEnricher.new, policy, { "network" => {} })
+
+    assert_empty applied
+  end
 end

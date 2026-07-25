@@ -6,7 +6,7 @@ require "net/http"
 
 module SonosEq
   class GenreEnricher
-    def initialize(config:, store:, normalizer:)
+    def initialize(config:, store:, normalizer:, cache_writes: true)
       @enabled = config.fetch("enabled", true)
       @providers = Array(config["providers"]).map(&:to_s)
       @providers = %w[lastfm musicbrainz itunes] if @providers.empty?
@@ -17,6 +17,7 @@ module SonosEq
       @lastfm_api_key = resolve_lastfm_api_key(config["lastfm"] || {})
       @store = store
       @normalizer = normalizer
+      @cache_writes = cache_writes
     end
 
     def resolve(track_info)
@@ -40,8 +41,10 @@ module SonosEq
         next if genre == "unknown"
 
         result = { genre: genre, source: provider }
-        @store.write_genre_cache(artist: artist, title: title, genre: genre, provider: provider)
-        @store.compact_genre_cache_by_db_size!(max_bytes: @max_cache_size_bytes, compact_to_ratio: @compact_to_ratio)
+        if @cache_writes
+          @store.write_genre_cache(artist: artist, title: title, genre: genre, provider: provider)
+          @store.compact_genre_cache_by_db_size!(max_bytes: @max_cache_size_bytes, compact_to_ratio: @compact_to_ratio)
+        end
         return result
       end
 

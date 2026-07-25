@@ -1,10 +1,9 @@
 # frozen_string_literal: true
 
-require "yaml"
 require "time"
 require "rexml/document"
 require "pathname"
-require "tempfile"
+require_relative "config"
 require_relative "discovery"
 require_relative "soap_client"
 require_relative "genre_classifier"
@@ -18,9 +17,10 @@ module SonosEq
     AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
     RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"
 
-    def initialize(config_path, once: false)
+    def initialize(config_path, once: false, dry_run: false)
       @config_path = File.expand_path(config_path)
-      @once = once
+      @dry_run = dry_run
+      @once = once || dry_run
       @soap = SoapClient.new
       @last_track_key = {}
       @last_track_ctx = {}
@@ -35,15 +35,18 @@ module SonosEq
     def run
       cfg = load_config
       @config = cfg
-      @store = Store.new(db_path: db_path_from_config(cfg))
-      @store.setup!
-      @store.import_legacy!(config: cfg, config_dir: File.dirname(@config_path))
+      db_path = db_path_from_config(cfg)
+      if @dry_run && File.exist?(db_path)
+        @store = Store.new(db_path: db_path, readonly: true)
+      else
+        @store = Store.new(db_path: @dry_run ? ":memory:" : db_path)
+        @store.setup!
+        @store.import_legacy!(config: cfg, config_dir: File.dirname(@config_path))
+      end
       discovery = Discovery.new(timeout_sec: cfg.dig("network", "discovery_timeout_sec").to_i)
       devices = discovery.discover
       raise "No Sonos devices discovered" if devices.empty?
-      sync_devices_registry!(devices, cfg)
-      sync_target_rooms!(devices, cfg)
-      sync_target_device_ids!(devices, cfg)
+      sync_devices_registry!(devices, cfg) unless @dry_run
 
       monitored = select_monitored_devices(devices, cfg)
       raise "No matching Sonos devices found for targeting rules" if monitored.empty?
@@ -54,7 +57,8 @@ module SonosEq
       genre_enricher = GenreEnricher.new(
         config: cfg["genre_lookup"] || {},
         store: @store,
-        normalizer: normalizer
+        normalizer: normalizer,
+        cache_writes: !@dry_run
       )
       overrides = {
         "songs" => {
@@ -69,6 +73,7 @@ module SonosEq
 
       puts "Discovered rooms: #{devices.map(&:room_name).sort.join(', ')}"
       puts "Monitoring rooms: #{monitored.map(&:room_name).sort.join(', ')}"
+      puts "Dry run: speaker and persistent-state writes are disabled" if @dry_run
 
       loop do
         monitored.each do |device|
@@ -83,7 +88,7 @@ module SonosEq
     private
 
     def load_config
-      YAML.safe_load_file(@config_path, permitted_classes: [], aliases: false)
+      Config.load(@config_path)
     end
 
     def process_device(device, classifier, genre_enricher, policy, cfg)
@@ -152,6 +157,8 @@ module SonosEq
 
       if cooldown_active?(device.udn, cooldown)
         puts "#{timestamp} room=#{device.room_name} skip=cooldown"
+      elsif @dry_run
+        puts "#{timestamp} room=#{device.room_name} would_apply=#{target_preset}"
       else
         apply_eq(device, target_preset, include_ht_music: include_ht_music)
         @last_applied[device.udn] = merge_preset_onto_current(current_eq, target_preset)
@@ -335,54 +342,19 @@ module SonosEq
         @override_candidates.delete(udn)
         return
       end
-      @store.upsert_song_override(
-        device_id: candidate[:device_id],
-        title: candidate[:title],
-        artist: candidate[:artist],
-        preset: preset,
-        source: "manual_learn"
-      )
-      puts "#{timestamp} room=#{candidate[:room_name]} device_id=#{candidate[:device_id]} learned_song_override title=#{candidate[:title].inspect} artist=#{candidate[:artist].inspect} preset=#{preset}"
+      unless @dry_run
+        @store.upsert_song_override(
+          device_id: candidate[:device_id],
+          title: candidate[:title],
+          artist: candidate[:artist],
+          preset: preset,
+          source: "manual_learn"
+        )
+      end
+      action = @dry_run ? "would_learn_song_override" : "learned_song_override"
+      puts "#{timestamp} room=#{candidate[:room_name]} device_id=#{candidate[:device_id]} #{action} title=#{candidate[:title].inspect} artist=#{candidate[:artist].inspect} preset=#{preset}"
       @last_applied[udn] = preset
       @override_candidates.delete(udn)
-    end
-
-    def sync_target_rooms!(devices, cfg)
-      sync_enabled = cfg.dig("network", "sync_target_rooms_on_startup")
-      return unless sync_enabled
-
-      discovered_rooms = devices.map(&:room_name).compact.map(&:to_s).uniq.sort
-      existing = Array(cfg["target_rooms"]).map(&:to_s).uniq
-      synced = if existing.empty?
-                 discovered_rooms
-               else
-                 (existing + discovered_rooms).uniq
-               end
-      return if synced == existing
-
-      cfg["target_rooms"] = synced
-      @config["target_rooms"] = synced
-      persist_config!
-      puts "#{timestamp} startup_sync target_rooms=#{synced.inspect}"
-    end
-
-    def sync_target_device_ids!(devices, cfg)
-      sync_enabled = cfg.dig("network", "sync_target_device_ids_on_startup")
-      return unless sync_enabled
-
-      discovered_ids = devices.map(&:udn).compact.map(&:to_s).uniq.sort
-      existing = Array(cfg["target_device_ids"]).map(&:to_s).uniq
-      synced = if existing.empty?
-                 discovered_ids
-               else
-                 (existing + discovered_ids).uniq
-               end
-      return if synced == existing
-
-      cfg["target_device_ids"] = synced
-      @config["target_device_ids"] = synced
-      persist_config!
-      puts "#{timestamp} startup_sync target_device_ids=#{synced.inspect}"
     end
 
     def sync_devices_registry!(devices, cfg)
@@ -501,17 +473,5 @@ module SonosEq
       File.expand_path(candidate, File.dirname(@config_path))
     end
 
-    def persist_config!
-      dir = File.dirname(@config_path)
-      basename = File.basename(@config_path)
-      payload = YAML.dump(@config)
-
-      Tempfile.create([basename, ".tmp"], dir) do |tmp|
-        tmp.write(payload)
-        tmp.flush
-        tmp.fsync
-        File.rename(tmp.path, @config_path)
-      end
-    end
   end
 end

@@ -7,6 +7,7 @@ require "fileutils"
 $LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
 
 require "sonos_eq/eq_policy"
+require "sonos_eq/config"
 require "sonos_eq/genre_enricher"
 require "sonos_eq/genre_normalizer"
 require "sonos_eq/store"

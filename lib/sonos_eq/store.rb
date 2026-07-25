@@ -8,15 +8,18 @@ require "sqlite3"
 
 module SonosEq
   class Store
-    def initialize(db_path:)
-      @db_path = File.expand_path(db_path)
-      FileUtils.mkdir_p(File.dirname(@db_path))
-      @db = SQLite3::Database.new(@db_path)
+    def initialize(db_path:, readonly: false)
+      @db_path = db_path == ":memory:" ? db_path : File.expand_path(db_path)
+      @readonly = readonly
+      FileUtils.mkdir_p(File.dirname(@db_path)) unless @readonly || @db_path == ":memory:"
+      @db = SQLite3::Database.new(@db_path, readonly: @readonly)
       @db.results_as_hash = true
       configure!
     end
 
     def setup!
+      raise "Cannot set up a read-only store" if @readonly
+
       @db.execute("PRAGMA journal_mode = WAL")
       @db.execute("PRAGMA synchronous = NORMAL")
       @db.execute("PRAGMA foreign_keys = ON")
@@ -265,6 +268,10 @@ module SonosEq
 
       @db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
       @db.execute("VACUUM")
+    end
+
+    def close
+      @db.close
     end
 
     private

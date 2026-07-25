@@ -33,10 +33,22 @@ chmod +x bin/sonos_eq_daemon
 bin/sonos_eq_daemon
 ```
 
-Single cycle (safe smoke test):
+Single cycle (applies changes when needed):
 
 ```bash
 bin/sonos_eq_daemon --once
+```
+
+Read-only smoke test:
+
+```bash
+bin/sonos_eq_daemon --dry-run
+```
+
+Validate configuration without discovery or speaker access:
+
+```bash
+bin/sonos_eq_daemon --validate-config
 ```
 
 Custom config:
@@ -59,8 +71,6 @@ Edit `config/settings.yml`:
 - `network.poll_interval_sec`: how often to poll now-playing.
 - `network.apply_cooldown_sec`: minimum seconds between EQ writes per room.
 - `network.manual_override_debounce_sec`: required stability window before a manual change is learned.
-- `network.sync_target_rooms_on_startup`: when true, discovered rooms are synced into `target_rooms` at startup (add-only, non-destructive).
-- `network.sync_target_device_ids_on_startup`: when true, discovered Sonos IDs (UDN) are synced into `target_device_ids` at startup (add-only).
 - `network.sync_devices_registry_on_startup`: when true, `devices` registry is refreshed with `room_name`, `model_name`, and `ip` for readability.
 - `home_theater_music.enabled`: when true, track/apply HT music controls on configured rooms.
 - `home_theater_music.rooms`: room names where HT controls are active (for example `Living Room`).
@@ -101,7 +111,7 @@ Edit `config/settings.yml`:
 - The daemon skips EQ writes for playback that does not look like identifiable music content.
 - Home theater music controls are only touched when the source looks like music, not TV input.
 - On track change, the daemon performs an end-of-song finalize pass for any pending learned override candidate.
-- Startup sync is safe: it only adds newly discovered entries (`target_rooms`, `target_device_ids`, `devices`) and never removes existing entries or overwrites `overrides`.
-- Remaining startup config sync writes (`target_rooms`, `target_device_ids`) are persisted atomically.
+- Discovery never changes `target_rooms` or `target_device_ids`; these remain explicit allowlists.
+- `--dry-run` performs one cycle without speaker, database, or config writes.
 - Safety: volume-changing SOAP actions are blocked in code (`SetVolume`, `SetRelativeVolume`, `SetVolumeDB`, `SetRelativeVolumeDB`).
 - This uses local Sonos UPnP APIs only and does not require Sonos cloud auth.
