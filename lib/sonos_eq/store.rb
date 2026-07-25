@@ -8,6 +8,8 @@ require "sqlite3"
 
 module SonosEq
   class Store
+    SCHEMA_VERSION = 2
+
     def initialize(db_path:, readonly: false)
       @db_path = db_path == ":memory:" ? db_path : File.expand_path(db_path)
       @readonly = readonly
@@ -116,6 +118,7 @@ module SonosEq
           PRIMARY KEY (artist_norm, title_norm)
         );
       SQL
+      @db.execute("PRAGMA user_version = #{SCHEMA_VERSION}")
     end
 
     def import_legacy!(config:, config_dir:)
@@ -180,6 +183,8 @@ module SonosEq
     end
 
     def load_global_song_overrides
+      return {} unless table_exists?("global_song_overrides")
+
       rows = @db.execute(<<~SQL)
         SELECT artist_norm, title_norm, bass, treble, loudness, sub_gain, surround_level
         FROM global_song_overrides
@@ -190,6 +195,8 @@ module SonosEq
     end
 
     def load_artist_overrides
+      return {} unless table_exists?("artist_overrides")
+
       rows = @db.execute(<<~SQL)
         SELECT artist_norm, bass, treble, loudness, sub_gain, surround_level
         FROM artist_overrides
@@ -452,6 +459,13 @@ module SonosEq
     def metadata(key)
       row = @db.get_first_row("SELECT value FROM app_metadata WHERE key = ?", [key.to_s])
       row && row["value"]
+    end
+
+    def table_exists?(name)
+      !@db.get_first_value(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        [name.to_s]
+      ).nil?
     end
 
     def set_metadata(key, value, now)

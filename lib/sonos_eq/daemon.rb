@@ -3,6 +3,7 @@
 require "time"
 require "rexml/document"
 require_relative "config"
+require_relative "event_logger"
 require_relative "discovery"
 require_relative "soap_client"
 require_relative "genre_classifier"
@@ -16,10 +17,13 @@ module SonosEq
     AV_TRANSPORT = "urn:schemas-upnp-org:service:AVTransport:1"
     RENDERING_CONTROL = "urn:schemas-upnp-org:service:RenderingControl:1"
 
-    def initialize(config_path, once: false, dry_run: false)
+    def initialize(config_path, once: false, dry_run: false, logger: nil, discovery_factory: nil)
       @config_path = File.expand_path(config_path)
       @dry_run = dry_run
       @once = once || dry_run
+      @logger = logger
+      @discovery_factory = discovery_factory || ->(timeout_sec) { Discovery.new(timeout_sec: timeout_sec) }
+      @stop_requested = false
       @soap = SoapClient.new
       @last_track_key = {}
       @last_track_ctx = {}
@@ -34,6 +38,8 @@ module SonosEq
     def run
       cfg = load_config
       @config = cfg
+      @logger ||= EventLogger.new(format: cfg.dig("logging", "format"))
+      install_signal_handlers
       db_path = db_path_from_config(cfg)
       if @dry_run && File.exist?(db_path)
         @store = Store.new(db_path: db_path, readonly: true)
@@ -42,7 +48,7 @@ module SonosEq
         @store.setup!
         @store.import_legacy!(config: cfg, config_dir: File.dirname(@config_path))
       end
-      discovery = Discovery.new(timeout_sec: cfg.dig("network", "discovery_timeout_sec").to_i)
+      discovery = @discovery_factory.call(cfg.dig("network", "discovery_timeout_sec").to_i)
       devices = discovery.discover
       raise "No Sonos devices discovered" if devices.empty?
       sync_devices_registry!(devices, cfg) unless @dry_run
@@ -57,21 +63,21 @@ module SonosEq
         config: cfg["genre_lookup"] || {},
         store: @store,
         normalizer: normalizer,
-        cache_writes: !@dry_run
+        cache_writes: !@dry_run,
+        logger: @logger
       )
       overrides = @store.load_overrides
       @policy = EqPolicy.new(@store.load_default_settings || {}, genre_presets, overrides)
 
-      puts "Discovered rooms: #{devices.map(&:room_name).sort.join(', ')}"
-      puts "Monitoring rooms: #{monitored.map(&:room_name).sort.join(', ')}"
-      puts "Dry run: speaker and persistent-state writes are disabled" if @dry_run
+      log_event("startup", discovered_rooms: devices.map(&:room_name).sort, monitored_rooms: monitored.map(&:room_name).sort)
+      log_event("dry_run_enabled") if @dry_run
       last_discovery_at = monotonic_now
 
       loop do
         monitored.each do |device|
           process_device(device, classifier, genre_enricher, @policy, cfg)
         end
-        break if @once
+        break if @once || @stop_requested
 
         sleep cfg.dig("network", "poll_interval_sec").to_i
         rediscovery_interval = cfg.dig("network", "rediscovery_interval_sec").to_f
@@ -80,6 +86,9 @@ module SonosEq
           last_discovery_at = monotonic_now
         end
       end
+      log_event("shutdown", reason: @stop_requested ? "signal" : "completed")
+    ensure
+      @store&.close
     end
 
     private
@@ -101,7 +110,13 @@ module SonosEq
       @last_track_key[device.udn] = track_key
 
       unless playback[:manageable]
-        puts "#{timestamp} room=#{device.room_name} skip=unmanaged_playback source_type=#{playback[:source_type].inspect} has_identity=#{playback[:has_identity]}"
+        log_event(
+          "playback_skipped",
+          room: device.room_name,
+          reason: "unmanaged_playback",
+          source_type: playback[:source_type],
+          has_identity: playback[:has_identity]
+        )
         return
       end
 
@@ -137,7 +152,15 @@ module SonosEq
       )
       target_preset = resolved.preset
 
-      puts "#{timestamp} room=#{device.room_name} title=#{track_info[:title].inspect} artist=#{track_info[:artist].inspect} genre=#{genre.inspect} genre_source=#{genre_source.inspect} source=#{resolved.source.inspect}"
+      log_event(
+        "track_resolved",
+        room: device.room_name,
+        title: track_info[:title],
+        artist: track_info[:artist],
+        genre: genre,
+        genre_source: genre_source,
+        preset_source: resolved.source
+      )
       @last_applied[device.udn] ||= current_eq.dup
 
       if manual_override_detected?(device.udn, current_eq)
@@ -153,17 +176,23 @@ module SonosEq
       end
 
       if cooldown_active?(device.udn, cooldown)
-        puts "#{timestamp} room=#{device.room_name} skip=cooldown"
+        log_event("eq_skipped", room: device.room_name, reason: "cooldown")
       elsif @dry_run
-        puts "#{timestamp} room=#{device.room_name} would_apply=#{target_preset}"
+        log_event("eq_would_apply", room: device.room_name, preset: target_preset)
       else
         apply_eq(device, target_preset, current_eq: current_eq, include_ht_music: include_ht_music)
         @last_applied[device.udn] = merge_preset_onto_current(current_eq, target_preset)
         @last_apply_at[device.udn] = Time.now
-        puts "#{timestamp} room=#{device.room_name} applied=#{target_preset}"
+        log_event("eq_applied", room: device.room_name, preset: target_preset)
       end
     rescue StandardError => e
-      puts "#{timestamp} room=#{device.room_name} error=#{e.message.inspect}"
+      log_event(
+        "device_error",
+        level: "error",
+        room: device.room_name,
+        error_class: e.class.name,
+        error: e.message
+      )
     end
 
     def current_track_info(device)
@@ -340,7 +369,7 @@ module SonosEq
           last_seen_at: Time.now,
           debounce_sec: cfg.dig("network", "manual_override_debounce_sec").to_i
         }
-        puts "#{timestamp} room=#{track_ctx[:room_name]} override_candidate=#{current_eq}"
+        log_event("override_candidate", room: track_ctx[:room_name], preset: current_eq)
       end
     end
 
@@ -362,7 +391,7 @@ module SonosEq
         preset: candidate[:eq]
       )
       if preset.nil?
-        puts "#{timestamp} room=#{candidate[:room_name]} skip=override_without_track_identity"
+        log_event("override_skipped", room: candidate[:room_name], reason: "missing_track_identity")
         @override_candidates.delete(udn)
         return
       end
@@ -376,7 +405,14 @@ module SonosEq
         )
       end
       action = @dry_run ? "would_learn_song_override" : "learned_song_override"
-      puts "#{timestamp} room=#{candidate[:room_name]} device_id=#{candidate[:device_id]} #{action} title=#{candidate[:title].inspect} artist=#{candidate[:artist].inspect} preset=#{preset}"
+      log_event(
+        action,
+        room: candidate[:room_name],
+        device_id: candidate[:device_id],
+        title: candidate[:title],
+        artist: candidate[:artist],
+        preset: preset
+      )
       @last_applied[udn] = preset
       @override_candidates.delete(udn)
     end
@@ -387,7 +423,7 @@ module SonosEq
 
       @store.upsert_devices(devices)
       registry = @store.load_devices_registry
-      puts "#{timestamp} startup_sync devices_registry_updated count=#{registry.size}"
+      log_event("device_registry_updated", count: registry.size)
     end
 
     def select_monitored_devices(devices, cfg)
@@ -403,16 +439,22 @@ module SonosEq
     def rediscover_monitored_devices(discovery, current_monitored, cfg)
       devices = discovery.discover
       if devices.empty?
-        puts "#{timestamp} rediscovery=empty retaining_previous_devices=#{current_monitored.size}"
+        log_event("rediscovery_empty", level: "warn", retaining_previous_devices: current_monitored.size)
         return current_monitored
       end
 
       sync_devices_registry!(devices, cfg) unless @dry_run
       monitored = select_monitored_devices(devices, cfg)
-      puts "#{timestamp} rediscovery=updated discovered=#{devices.size} monitored=#{monitored.size}"
+      log_event("rediscovery_updated", discovered: devices.size, monitored: monitored.size)
       monitored
     rescue StandardError => e
-      puts "#{timestamp} rediscovery=error error=#{e.message.inspect} retaining_previous_devices=#{current_monitored.size}"
+      log_event(
+        "rediscovery_error",
+        level: "warn",
+        error_class: e.class.name,
+        error: e.message,
+        retaining_previous_devices: current_monitored.size
+      )
       current_monitored
     end
 
@@ -501,12 +543,20 @@ module SonosEq
       Time.now - last < cooldown_sec
     end
 
-    def timestamp
-      Time.now.iso8601
-    end
-
     def monotonic_now
       Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    end
+
+    def install_signal_handlers
+      %w[INT TERM].each do |signal|
+        Signal.trap(signal) { @stop_requested = true }
+      end
+    rescue ArgumentError
+      nil
+    end
+
+    def log_event(name, level: "info", **fields)
+      (@logger ||= EventLogger.new).event(name, level: level, **fields)
     end
 
     def db_path_from_config(cfg)

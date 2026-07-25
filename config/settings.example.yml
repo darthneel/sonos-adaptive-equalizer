@@ -8,6 +8,8 @@ network:
   sync_devices_registry_on_startup: true
 storage:
   db_path: data/sonos_eq.sqlite3
+logging:
+  format: text
 home_theater_music:
   enabled: true
   rooms: []

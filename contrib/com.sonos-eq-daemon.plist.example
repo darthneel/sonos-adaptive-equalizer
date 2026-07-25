@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.sonos-eq-daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/absolute/path/to/bundle</string>
+    <string>exec</string>
+    <string>/absolute/path/to/sonos-eq-daemon/bin/sonos_eq_daemon</string>
+    <string>--config</string>
+    <string>/absolute/path/to/sonos-eq-daemon/config/settings.yml</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/absolute/path/to/sonos-eq-daemon</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/sonos-eq-daemon.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/sonos-eq-daemon.error.log</string>
+</dict>
+</plist>

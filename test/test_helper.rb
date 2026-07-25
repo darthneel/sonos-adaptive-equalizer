@@ -13,6 +13,10 @@ require "sonos_eq/genre_normalizer"
 require "sonos_eq/store"
 require "sonos_eq/daemon"
 require "sonos_eq/override_cli"
+require "sonos_eq/discovery"
+require "sonos_eq/soap_client"
+require "sonos_eq/genre_classifier"
+require "sonos_eq/event_logger"
 
 module SonosEqTestSupport
   def with_tmpdir

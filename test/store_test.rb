@@ -67,6 +67,7 @@ class StoreTest < Minitest::Test
 
       store.import_legacy!(config: config, config_dir: File.join(tmpdir, "config"))
 
+      assert_equal SonosEq::Store::SCHEMA_VERSION, store.instance_variable_get(:@db).get_first_value("PRAGMA user_version")
       assert_equal({ "bass" => 1, "treble" => 2, "loudness" => false }, store.load_default_settings)
       assert_equal 3, store.load_genre_presets.dig("rock", "bass")
       assert_equal 5, store.load_song_overrides.dig("uuid:device-1", "artist a - song a", "bass")
@@ -159,6 +160,33 @@ class StoreTest < Minitest::Test
       assert_equal 1, store.delete_artist_override(artist: "Artist")
       assert_empty store.load_global_song_overrides
       assert_empty store.load_artist_overrides
+    end
+  end
+
+  def test_read_only_legacy_database_treats_new_override_scopes_as_empty
+    with_tmpdir do |tmpdir|
+      path = File.join(tmpdir, "legacy.sqlite3")
+      db = SQLite3::Database.new(path)
+      db.execute_batch(<<~SQL)
+        CREATE TABLE song_overrides (
+          device_id TEXT NOT NULL,
+          artist_norm TEXT NOT NULL,
+          title_norm TEXT NOT NULL,
+          bass INTEGER NOT NULL,
+          treble INTEGER NOT NULL,
+          loudness INTEGER NOT NULL,
+          sub_gain INTEGER,
+          surround_level INTEGER,
+          PRIMARY KEY (device_id, artist_norm, title_norm)
+        );
+      SQL
+      db.close
+
+      store = SonosEq::Store.new(db_path: path, readonly: true)
+
+      assert_equal({}, store.load_global_song_overrides)
+      assert_equal({}, store.load_artist_overrides)
+      store.close
     end
   end
 end

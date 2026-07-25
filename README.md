@@ -12,7 +12,7 @@ The few remaining YAML writes use atomic replace semantics.
 
 ## Requirements
 
-- Ruby 3.2+ recommended
+- Ruby 3.2+
 - Sonos devices reachable on the local network
 
 ## Setup
@@ -71,14 +71,17 @@ bin/sonos_eq_overrides export
 ## Test
 
 ```bash
-rake test
+bundle exec rake test
 ```
+
+The repository selects Ruby 3.2 through `.ruby-version` and tests supported Ruby releases in CI.
 
 ## Config
 
 Edit `config/settings.yml`:
 - `target_rooms`: empty means all discovered rooms.
 - `storage.db_path`: SQLite database path for mutable state.
+- `logging.format`: `text` for human-readable events or `json` for structured logs.
 - `network.poll_interval_sec`: how often to poll now-playing.
 - `network.apply_cooldown_sec`: minimum seconds between EQ writes per room.
 - `network.manual_override_debounce_sec`: required stability window before a manual change is learned.
@@ -132,3 +135,7 @@ Edit `config/settings.yml`:
 - `--dry-run` performs one cycle without speaker, database, or config writes.
 - Safety: volume-changing SOAP actions are blocked in code (`SetVolume`, `SetRelativeVolume`, `SetVolumeDB`, `SetRelativeVolumeDB`).
 - This uses local Sonos UPnP APIs only and does not require Sonos cloud auth.
+
+## macOS service
+
+`contrib/com.sonos-eq-daemon.plist.example` is a LaunchAgent template. Copy it to a personal plist, replace the absolute paths, and load that copy with `launchctl`.

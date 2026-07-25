@@ -7,7 +7,7 @@ require "timeout"
 
 module SonosEq
   class GenreEnricher
-    def initialize(config:, store:, normalizer:, cache_writes: true)
+    def initialize(config:, store:, normalizer:, cache_writes: true, logger: nil)
       @enabled = config.fetch("enabled", true)
       @providers = Array(config["providers"]).map(&:to_s)
       @providers = %w[lastfm musicbrainz itunes] if @providers.empty?
@@ -24,6 +24,7 @@ module SonosEq
       @store = store
       @normalizer = normalizer
       @cache_writes = cache_writes
+      @logger = logger
       @provider_backoff_until = {}
       @last_musicbrainz_request_at = nil
     end
@@ -72,7 +73,17 @@ module SonosEq
       rescue StandardError => e
         complete_miss = false
         @provider_backoff_until[provider] = monotonic_now + @provider_failure_backoff_sec
-        warn "genre_lookup provider=#{provider.inspect} error=#{e.class}: #{e.message}"
+        if @logger
+          @logger.event(
+            "genre_provider_error",
+            level: "warn",
+            provider: provider,
+            error_class: e.class.name,
+            error: e.message
+          )
+        else
+          warn "genre_lookup provider=#{provider.inspect} error=#{e.class}: #{e.message}"
+        end
       end
 
       if complete_miss && @cache_writes

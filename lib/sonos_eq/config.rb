@@ -19,6 +19,9 @@ module SonosEq
       "storage" => {
         "db_path" => "data/sonos_eq.sqlite3"
       },
+      "logging" => {
+        "format" => "text"
+      },
       "home_theater_music" => {
         "enabled" => false,
         "rooms" => []
@@ -97,6 +100,9 @@ module SonosEq
       validate_string_array!(config["home_theater_music"], "rooms", prefix: "home_theater_music")
       validate_string_array!(config["genre_lookup"], "providers", prefix: "genre_lookup")
       validate_preset!(config["defaults"], "defaults")
+      log_format = config.dig("logging", "format").to_s
+      raise Error, "logging.format must be text or json" unless %w[text json].include?(log_format)
+
       config.fetch("genres", {}).each do |genre, preset|
         raise Error, "genres.#{genre} must be a mapping" unless preset.is_a?(Hash)
 

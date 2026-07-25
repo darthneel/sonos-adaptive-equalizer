@@ -1,0 +1,37 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    mini_portile2 (2.8.9)
+    minitest (6.0.0)
+      prism (~> 1.5)
+    prism (1.8.0)
+    rake (13.3.1)
+    rexml (3.4.4)
+    sqlite3 (2.9.2)
+      mini_portile2 (~> 2.8.0)
+    sqlite3 (2.9.2-arm64-darwin)
+    sqlite3 (2.9.2-x86_64-linux-gnu)
+
+PLATFORMS
+  arm64-darwin
+  ruby
+  x86_64-linux
+
+DEPENDENCIES
+  minitest (>= 5.20, < 7)
+  rake (>= 13.2, < 14)
+  rexml (>= 3.3, < 4)
+  sqlite3 (~> 2.9)
+
+CHECKSUMS
+  mini_portile2 (2.8.9) sha256=0cd7c7f824e010c072e33f68bc02d85a00aeb6fce05bb4819c03dfd3c140c289
+  minitest (6.0.0) sha256=4ca597fc1d735ea18d2b4b98c5fb1d5a6da4a6f35ddf32bd5fa3eded33a453be
+  prism (1.8.0) sha256=84453a16ef5530ea62c5f03ec16b52a459575ad4e7b9c2b360fd8ce2c39c1254
+  rake (13.3.1) sha256=8c9e89d09f66a26a01264e7e3480ec0607f0c497a861ef16063604b1b08eb19c
+  rexml (3.4.4) sha256=19e0a2c3425dfbf2d4fc1189747bdb2f849b6c5e74180401b15734bc97b5d142
+  sqlite3 (2.9.2) sha256=86814150714b6b06a328d083f46408e7a4a83b5f0a9673ed934ee3a1cb7a73b1
+  sqlite3 (2.9.2-arm64-darwin) sha256=d15bd9609a05f9d54930babe039585efc8cadd57517c15b64ec7dfa75158a5e9
+  sqlite3 (2.9.2-x86_64-linux-gnu) sha256=dce83ffcb7e72f9f7aeb6e5404f15d277a45332fe18ccce8a8b3ed51e8d23aee
+
+BUNDLED WITH
+  4.0.3
