@@ -102,7 +102,7 @@ Edit `config/settings.yml`:
 - If still unknown, it queries external providers in order (`lastfm`, `musicbrainz`, `itunes`) and caches results in `genre_lookup.cache_path`.
 - Raw provider genres/tags are normalized into a fixed canonical app genre set before preset selection.
 - Only successful genre lookups are cached.
-- Cache eviction: TTL expiry on read plus size-based compaction (oldest `seen_at` entries evicted when cache exceeds `max_cache_size_bytes`).
+- Cache eviction: TTL expiry on read plus logical cache-size compaction (oldest `seen_at` entries evicted to the configured target ratio).
 - Preset precedence is: `song+device` -> `song` -> `artist` -> `genre` -> `default`.
 - If you change EQ in the Sonos app and it remains stable for `manual_override_debounce_sec`, the daemon writes a `song+device` override into SQLite.
 - Learned overrides are stored in SQLite using device IDs (Sonos UDNs).
@@ -110,7 +110,7 @@ Edit `config/settings.yml`:
 - For configured HT rooms, learned/applied presets can also include `sub_gain` and `surround_level` (mapped to Sonos `SubGain` and `SurroundLevel`).
 - The daemon skips EQ writes for playback that does not look like identifiable music content.
 - Home theater music controls are only touched when the source looks like music, not TV input.
-- On track change, the daemon performs an end-of-song finalize pass for any pending learned override candidate.
+- On track change, the daemon persists only candidates that already satisfied the manual-change debounce window.
 - Discovery never changes `target_rooms` or `target_device_ids`; these remain explicit allowlists.
 - `--dry-run` performs one cycle without speaker, database, or config writes.
 - Safety: volume-changing SOAP actions are blocked in code (`SetVolume`, `SetRelativeVolume`, `SetVolumeDB`, `SetRelativeVolumeDB`).

@@ -34,4 +34,13 @@ class GenreNormalizerTest < Minitest::Test
 
     assert_equal "unknown", normalizer.normalize_candidates(["glitch noir"])
   end
+
+  def test_short_aliases_require_token_boundaries
+    normalizer = build_normalizer
+
+    assert_equal "unknown", normalizer.normalize_text("Walter")
+    assert_equal "unknown", normalizer.normalize_text("Salt")
+    assert_equal "unknown", normalizer.normalize_text("trapped")
+    assert_equal "rock", normalizer.normalize_text("alt-rock")
+  end
 end

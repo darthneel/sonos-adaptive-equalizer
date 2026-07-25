@@ -253,22 +253,29 @@ module SonosEq
       ])
     end
 
-    def compact_genre_cache_by_db_size!(max_bytes:, compact_to_ratio:)
+    def compact_genre_cache!(max_bytes:, compact_to_ratio:)
       return if max_bytes.to_i <= 0
-      return if db_size_bytes <= max_bytes.to_i
+      current_bytes = genre_cache_size_bytes
+      return if current_bytes <= max_bytes.to_i
 
       target_bytes = (max_bytes.to_i * compact_to_ratio.to_f).to_i
       target_bytes = max_bytes.to_i if target_bytes <= 0 || target_bytes >= max_bytes.to_i
 
-      while db_size_bytes > target_bytes
-        deleted = @db.execute("DELETE FROM genre_cache WHERE rowid IN (SELECT rowid FROM genre_cache ORDER BY seen_at ASC LIMIT 100)")
-        break if deleted.nil?
-        break if @db.changes.zero?
-      end
+      while current_bytes > target_bytes
+        row = @db.get_first_row(<<~SQL)
+          SELECT rowid, #{genre_cache_entry_size_sql} AS entry_size
+          FROM genre_cache
+          ORDER BY seen_at ASC
+          LIMIT 1
+        SQL
+        break if row.nil?
 
-      @db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-      @db.execute("VACUUM")
+        @db.execute("DELETE FROM genre_cache WHERE rowid = ?", [row["rowid"]])
+        current_bytes -= row["entry_size"].to_i
+      end
     end
+
+    alias compact_genre_cache_by_db_size! compact_genre_cache!
 
     def close
       @db.close
@@ -427,12 +434,21 @@ module SonosEq
       !%w[0 false no off].include?(value.to_s.strip.downcase)
     end
 
-    def db_size_bytes
-      page_count = @db.get_first_value("PRAGMA page_count").to_i
-      page_size = @db.get_first_value("PRAGMA page_size").to_i
-      wal_path = "#{@db_path}-wal"
-      wal_size = File.exist?(wal_path) ? File.size(wal_path) : 0
-      (page_count * page_size) + wal_size
+    def genre_cache_size_bytes
+      @db.get_first_value("SELECT COALESCE(SUM(#{genre_cache_entry_size_sql}), 0) FROM genre_cache").to_i
+    end
+
+    def genre_cache_entry_size_sql
+      [
+        "COALESCE(length(artist_norm), 0)",
+        "COALESCE(length(title_norm), 0)",
+        "COALESCE(length(artist_display), 0)",
+        "COALESCE(length(title_display), 0)",
+        "COALESCE(length(genre), 0)",
+        "COALESCE(length(provider), 0)",
+        "COALESCE(length(seen_at), 0)",
+        "64"
+      ].join(" + ")
     end
   end
 end

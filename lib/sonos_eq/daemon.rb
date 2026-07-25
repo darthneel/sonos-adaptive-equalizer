@@ -99,7 +99,7 @@ module SonosEq
       playback = playback_context(track_info)
 
       if @last_track_key[device.udn] && @last_track_key[device.udn] != track_key
-        finalize_override_candidate(device.udn, force: true)
+        finalize_override_candidate(device.udn, discard_if_unstable: true)
       end
       @last_track_key[device.udn] = track_key
 
@@ -145,10 +145,10 @@ module SonosEq
 
       if manual_override_detected?(device.udn, current_eq)
         observe_override_candidate(device.udn, current_ctx, current_eq, cfg)
-        finalize_override_candidate(device.udn, force: false)
+        finalize_override_candidate(device.udn)
         return
       end
-      finalize_override_candidate(device.udn, force: false)
+      finalize_override_candidate(device.udn)
 
       cooldown = cfg.dig("network", "apply_cooldown_sec").to_i
       if eq_matches_target?(current_eq, target_preset)
@@ -160,7 +160,7 @@ module SonosEq
       elsif @dry_run
         puts "#{timestamp} room=#{device.room_name} would_apply=#{target_preset}"
       else
-        apply_eq(device, target_preset, include_ht_music: include_ht_music)
+        apply_eq(device, target_preset, current_eq: current_eq, include_ht_music: include_ht_music)
         @last_applied[device.udn] = merge_preset_onto_current(current_eq, target_preset)
         @last_apply_at[device.udn] = Time.now
         puts "#{timestamp} room=#{device.room_name} applied=#{target_preset}"
@@ -241,14 +241,38 @@ module SonosEq
       REXML::XPath.first(doc, "//*[local-name()='#{local_name}']")&.text.to_s.strip
     end
 
-    def apply_eq(device, preset, include_ht_music:)
-      set_rendering(device, "SetBass", "DesiredBass", preset["bass"])
-      set_rendering(device, "SetTreble", "DesiredTreble", preset["treble"])
-      set_rendering(device, "SetLoudness", "DesiredLoudness", preset["loudness"] ? 1 : 0)
-      if include_ht_music
-        set_eq_value(device, "SubGain", preset["sub_gain"]) if preset.key?("sub_gain")
-        set_eq_value(device, "SurroundLevel", preset["surround_level"]) if preset.key?("surround_level")
+    def apply_eq(device, preset, current_eq:, include_ht_music:)
+      apply_rendering_value(device, current_eq, preset, "bass", "SetBass", "DesiredBass")
+      apply_rendering_value(device, current_eq, preset, "treble", "SetTreble", "DesiredTreble")
+      apply_rendering_value(device, current_eq, preset, "loudness", "SetLoudness", "DesiredLoudness") do |value|
+        value ? 1 : 0
       end
+      if include_ht_music
+        apply_eq_value(device, current_eq, preset, "sub_gain", "SubGain")
+        apply_eq_value(device, current_eq, preset, "surround_level", "SurroundLevel")
+      end
+    end
+
+    def apply_rendering_value(device, current_eq, preset, key, action, argument)
+      return unless preset.key?(key)
+      return if normalize_eq_value(key, current_eq[key]) == normalize_eq_value(key, preset[key])
+
+      value = block_given? ? yield(preset[key]) : preset[key]
+      set_rendering(device, action, argument, value)
+      remember_daemon_write(device.udn, key, preset[key])
+    end
+
+    def apply_eq_value(device, current_eq, preset, key, eq_type)
+      return unless preset.key?(key)
+      return if normalize_eq_value(key, current_eq[key]) == normalize_eq_value(key, preset[key])
+
+      set_eq_value(device, eq_type, preset[key])
+      remember_daemon_write(device.udn, key, preset[key])
+    end
+
+    def remember_daemon_write(udn, key, value)
+      @last_applied[udn] ||= {}
+      @last_applied[udn][key] = value
     end
 
     def set_rendering(device, action, arg_name, value)
@@ -323,13 +347,16 @@ module SonosEq
       end
     end
 
-    def finalize_override_candidate(udn, force:)
+    def finalize_override_candidate(udn, discard_if_unstable: false)
       candidate = @override_candidates[udn]
       return if candidate.nil?
 
       elapsed = Time.now - candidate[:first_seen_at]
       required = [candidate[:debounce_sec], 0].max
-      return if !force && elapsed < required
+      if elapsed < required
+        @override_candidates.delete(udn) if discard_if_unstable
+        return
+      end
 
       preset = @policy.upsert_song_device_override(
         device_id: candidate[:device_id],

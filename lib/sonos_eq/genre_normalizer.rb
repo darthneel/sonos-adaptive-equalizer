@@ -77,7 +77,7 @@ module SonosEq
         next if normalized_candidate.empty?
 
         @alias_to_canonical.each do |alias_name, canonical|
-          next unless normalized_candidate.include?(alias_name)
+          next unless phrase_match?(normalized_candidate, alias_name)
 
           score = normalized_candidate == alias_name ? 3 : 1
           scores[canonical] += score
@@ -100,6 +100,11 @@ module SonosEq
 
     def normalize_key(value)
       value.to_s.downcase.strip.gsub(/\s+/, " ")
+    end
+
+    def phrase_match?(candidate, phrase)
+      pattern = /(?<![[:alnum:]])#{Regexp.escape(phrase)}(?![[:alnum:]])/
+      candidate.match?(pattern)
     end
   end
 end

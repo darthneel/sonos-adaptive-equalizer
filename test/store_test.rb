@@ -92,4 +92,30 @@ class StoreTest < Minitest::Test
       assert_equal({ genre: "pop", source: "musicbrainz" }, cached)
     end
   end
+
+  def test_cache_compaction_removes_only_enough_oldest_rows
+    with_tmpdir do |tmpdir|
+      store = build_store(tmpdir)
+      20.times do |index|
+        store.write_genre_cache(
+          artist: "Artist #{index}",
+          title: "Song #{index}",
+          genre: "rock",
+          provider: "test"
+        )
+      end
+      before_size = store.send(:genre_cache_size_bytes)
+      before_count = store.instance_variable_get(:@db).get_first_value("SELECT COUNT(*) FROM genre_cache").to_i
+      max_bytes = before_size - 1
+      target_bytes = (max_bytes * 0.6).to_i
+
+      store.compact_genre_cache!(max_bytes: max_bytes, compact_to_ratio: 0.6)
+
+      after_size = store.send(:genre_cache_size_bytes)
+      after_count = store.instance_variable_get(:@db).get_first_value("SELECT COUNT(*) FROM genre_cache").to_i
+      assert_operator after_size, :<=, target_bytes
+      assert_operator after_count, :>, 0
+      assert_operator after_count, :<, before_count
+    end
+  end
 end

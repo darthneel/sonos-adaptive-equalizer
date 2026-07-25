@@ -76,7 +76,7 @@ class DaemonTest < Minitest::Test
     daemon.define_singleton_method(:current_track_info) do |_device|
       { track_uri: "", title: "", artist: "", album: "", track_metadata_xml: "" }
     end
-    daemon.define_singleton_method(:apply_eq) { |_device, _preset, include_ht_music:| applied << include_ht_music }
+    daemon.define_singleton_method(:apply_eq) { |_device, _preset, current_eq:, include_ht_music:| applied << include_ht_music }
 
     daemon.send(:process_device, device, FakeClassifier.new, FakeEnricher.new, daemon.instance_variable_get(:@policy), { "network" => {} })
 
@@ -99,7 +99,7 @@ class DaemonTest < Minitest::Test
       include_ht_values << include_ht_music
       { "bass" => 0, "treble" => 0, "loudness" => true }
     end
-    daemon.define_singleton_method(:apply_eq) { |_device, _preset, include_ht_music:| include_ht_values << include_ht_music }
+    daemon.define_singleton_method(:apply_eq) { |_device, _preset, current_eq:, include_ht_music:| include_ht_values << include_ht_music }
 
     cfg = { "network" => {}, "home_theater_music" => { "enabled" => true, "rooms" => ["Living Room"] } }
     daemon.send(:process_device, device, FakeClassifier.new, FakeEnricher.new, daemon.instance_variable_get(:@policy), cfg)
@@ -131,7 +131,7 @@ class DaemonTest < Minitest::Test
         { "bass" => 4, "treble" => 2, "loudness" => false }
       end
     end
-    daemon.define_singleton_method(:apply_eq) { |_device, _preset, include_ht_music:| }
+    daemon.define_singleton_method(:apply_eq) { |_device, _preset, current_eq:, include_ht_music:| }
 
     cfg = { "network" => { "manual_override_debounce_sec" => 0 } }
     daemon.send(:process_device, device, FakeClassifier.new, FakeEnricher.new, policy, cfg)
@@ -180,5 +180,50 @@ class DaemonTest < Minitest::Test
     daemon.send(:process_device, device, FakeClassifier.new, FakeEnricher.new, policy, { "network" => {} })
 
     assert_empty applied
+  end
+
+  def test_partial_daemon_write_is_remembered_as_daemon_authored
+    daemon = build_daemon
+    current = { "bass" => 0, "treble" => 0, "loudness" => true }
+    target = { "bass" => 3, "treble" => 2, "loudness" => true }
+    daemon.instance_variable_set(:@last_applied, device.udn => current.dup)
+    calls = []
+    daemon.define_singleton_method(:set_rendering) do |_device, action, _argument, _value|
+      calls << action
+      raise "speaker rejected treble" if action == "SetTreble"
+    end
+
+    assert_raises(RuntimeError) do
+      daemon.send(:apply_eq, device, target, current_eq: current, include_ht_music: false)
+    end
+
+    expected = daemon.instance_variable_get(:@last_applied)[device.udn]
+    assert_equal 3, expected["bass"]
+    assert_equal 0, expected["treble"]
+    assert_equal %w[SetBass SetTreble], calls
+    refute daemon.send(:manual_override_detected?, device.udn, expected)
+  end
+
+  def test_track_change_discards_candidate_before_debounce
+    daemon = build_daemon
+    daemon.instance_variable_set(
+      :@override_candidates,
+      device.udn => {
+        device_id: device.udn,
+        room_name: device.room_name,
+        title: "Song",
+        artist: "Artist",
+        track_key: "old",
+        eq: { "bass" => 4, "treble" => 2, "loudness" => false },
+        first_seen_at: Time.now,
+        last_seen_at: Time.now,
+        debounce_sec: 10
+      }
+    )
+
+    daemon.send(:finalize_override_candidate, device.udn, discard_if_unstable: true)
+
+    assert_nil daemon.instance_variable_get(:@override_candidates)[device.udn]
+    assert_empty daemon.instance_variable_get(:@store).override_writes
   end
 end

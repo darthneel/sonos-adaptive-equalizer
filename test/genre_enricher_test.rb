@@ -21,7 +21,7 @@ class GenreEnricherTest < Minitest::Test
       @writes << { artist: artist, title: title, genre: genre, provider: provider }
     end
 
-    def compact_genre_cache_by_db_size!(max_bytes:, compact_to_ratio:)
+    def compact_genre_cache!(max_bytes:, compact_to_ratio:)
       @compact_calls << { max_bytes: max_bytes, compact_to_ratio: compact_to_ratio }
     end
   end

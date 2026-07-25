@@ -43,7 +43,7 @@ module SonosEq
         result = { genre: genre, source: provider }
         if @cache_writes
           @store.write_genre_cache(artist: artist, title: title, genre: genre, provider: provider)
-          @store.compact_genre_cache_by_db_size!(max_bytes: @max_cache_size_bytes, compact_to_ratio: @compact_to_ratio)
+          @store.compact_genre_cache!(max_bytes: @max_cache_size_bytes, compact_to_ratio: @compact_to_ratio)
         end
         return result
       end
